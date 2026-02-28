@@ -456,7 +456,7 @@ class LMCacheEngine:
             assert isinstance(request_configs, dict)
 
         with store_stats.profile_process_tokens():
-            prev_key = 0
+            prev_key = None
             for start, end, key in self.token_database.process_tokens(
                 tokens,
                 hashes,
@@ -635,7 +635,7 @@ class LMCacheEngine:
         if request_configs is not None and len(request_configs) != 0:
             assert isinstance(request_configs, dict)
 
-        prev_key = 0
+        prev_key = None
         for start, end, key in self.token_database.process_tokens(
             tokens=tokens, mask=mask, request_configs=request_configs
         ):
