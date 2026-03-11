@@ -30,9 +30,7 @@ jobs:
 
     # For pull_request events: only run if the source branch is a feat/weka* branch.
     # For push events: github.head_ref is empty, so the condition passes through.
-    if: |
-      github.event_name == 'push' ||
-      startsWith(github.head_ref, 'feat/weka')
+    if: github.event_name == 'push' || startsWith(github.head_ref, 'feat/weka')
 
     steps:
       - name: Checkout code
