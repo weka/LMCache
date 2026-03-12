@@ -107,6 +107,9 @@ jobs:
             ENABLE_CXX11_ABI="1"
             CUDA_HOME="/usr/local/cuda"
             SETUPTOOLS_SCM_PRETEND_VERSION="$SETUPTOOLS_SCM_PRETEND_VERSION"
+          # Specifies the command to run after building a Linux wheel to repair it.
+          # This command is used by cibuildwheel to make the wheel compatible with different Linux distributions
+          # by bundling external shared libraries into the wheel using tools like auditwheel.
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
             auditwheel repair
             --plat manylinux_2_28_aarch64
