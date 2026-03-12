@@ -11,14 +11,6 @@ on:
     branches:
       - feat/weka-gds-rdma
 
-env:
-  LC_ALL: en_US.UTF-8
-  # Pass the computed Weka version from the host into the cibuildwheel container.
-  # CUDA_HOME is NOT passed from the host — it is set directly inside the container
-  # via CIBW_ENVIRONMENT_LINUX because /usr/local/cuda is a fixed path in all
-  # pytorch manylinux builder images and does not need host-side detection.
-  CIBW_ENVIRONMENT_PASS_LINUX: "SETUPTOOLS_SCM_PRETEND_VERSION"
-
 defaults:
   run:
     shell: bash
@@ -80,58 +72,26 @@ jobs:
           echo "SETUPTOOLS_SCM_PRETEND_VERSION=${WEKA_VERSION}" >> "$GITHUB_ENV"
           echo "Building version: ${WEKA_VERSION}"
 
-      - name: Setup Python 3.12
-        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
-        with:
-          python-version: "3.12"
-
-      - name: Install build tooling
+      - name: Install build dependencies
+        # PyPI torch is CPU-only and lacks CUDA extension headers.
+        # Install torch from PyTorch's CUDA wheel index so CUDA headers are present.
+        # cu130 matches the CUDA 13.x on the self-hosted GB10 runner.
+        # Use --no-build-isolation so the build uses the already-installed CUDA torch
+        # (as recommended in pyproject.toml and INSTALL_FROM_SOURCE.md).
         run: |
-          python -m pip install --upgrade pip
-          pip install build cibuildwheel
+          python3 -m pip install --upgrade pip
+          pip install ninja 'packaging>=24.2' 'setuptools>=77.0.3,<81.0.0' 'setuptools_scm>=8' wheel
+          pip install 'torch==2.9.1+cu130' --index-url https://download.pytorch.org/whl/cu130
 
-      - name: Build CUDA wheels (manylinux_aarch64, CUDA 12.8)
+      - name: Build wheel (CUDA 13.x, aarch64)
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ env.SETUPTOOLS_SCM_PRETEND_VERSION }}
-          # Override pyproject.toml [tool.cibuildwheel] defaults (which target x86_64)
-          CIBW_BUILD: "cp312-manylinux_aarch64"
-          CIBW_MANYLINUX_AARCH64_IMAGE: "docker.io/pytorch/manylinuxaarch64-builder:cuda12.8"
-          # Set environment variables directly inside the container.
-          # CIBW_ENVIRONMENT_LINUX overrides pyproject.toml's [tool.cibuildwheel] environment,
-          # so all required vars must be listed here explicitly.
-          # CUDA_HOME is hardcoded to /usr/local/cuda — the fixed path used by all
-          # pytorch manylinux builder images (NVIDIA installs CUDA there by convention).
-          # SETUPTOOLS_SCM_PRETEND_VERSION is expanded from the host via CIBW_ENVIRONMENT_PASS_LINUX.
-          CIBW_ENVIRONMENT_LINUX: >-
-            TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0;10.0"
-            ENABLE_CXX11_ABI="1"
-            CUDA_HOME="/usr/local/cuda"
-            SETUPTOOLS_SCM_PRETEND_VERSION="$SETUPTOOLS_SCM_PRETEND_VERSION"
-          # Specifies the command to run after building a Linux wheel to repair it.
-          # This command is used by cibuildwheel to make the wheel compatible with different Linux distributions
-          # by bundling external shared libraries into the wheel using tools like auditwheel.
-          # Pre-install build requirements so --no-isolation works.
-          # torch==2.8.0 is large but pip caches it on the self-hosted runner.
-          CIBW_BEFORE_BUILD: "pip install ninja 'packaging>=24.2' 'setuptools>=77.0.3,<81.0.0' 'setuptools_scm>=8' 'torch==2.8.0' wheel"
-          # Skip build isolation so setup.py runs in the container's main Python
-          # process, where CUDA_HOME (and all other env vars) are inherited directly.
-          # With isolation, pip reconstructs the subprocess environment and strips
-          # custom vars like CUDA_HOME before invoking the build backend.
-          CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
-            auditwheel repair
-            --plat manylinux_2_28_aarch64
-            --exclude libtorch.so
-            --exclude libtorch_cuda.so
-            --exclude libtorch_python.so
-            --exclude libtorch_cpu.so
-            --exclude libc10.so
-            --exclude libc10_cuda.so
-            --exclude libcudart.so.12
-            -w {dest_dir} {wheel}
+          # CUDA 13.x dropped support for SM 7.0 (Volta).  Minimum is SM 7.5.
+          TORCH_CUDA_ARCH_LIST: "7.5;8.0;8.6;8.9;9.0;10.0"
+          ENABLE_CXX11_ABI: "1"
         run: |
           rm -rf dist/
-          python -m cibuildwheel --output-dir dist
+          pip wheel . --no-build-isolation --no-deps --wheel-dir dist
 
       # PRs: upload as a temporary artifact for inspection (auto-deleted after 30 days)
       - name: Upload PR artifact
@@ -145,7 +105,7 @@ jobs:
       # Merges: create a versioned GitHub Release and attach the wheels permanently.
       # Release tag uses '-' instead of '+' since '+' is not valid in git ref names
       # (e.g. v0.3.14-weka.33), but the wheel filename retains the canonical PEP 440
-      # version with '+' (e.g. lmcache-0.3.14+weka.33-cp312-...-manylinux_2_28_aarch64.whl).
+      # version with '+' (e.g. lmcache-0.3.14+weka.33-cp312-...-linux_aarch64.whl).
       - name: Create GitHub Release with wheels
         if: github.event_name == 'push'
         env:
@@ -156,4 +116,4 @@ jobs:
           gh release create "${RELEASE_TAG}" dist/*.whl \
             --repo "${{ github.repository }}" \
             --title "Weka LMCache ${WEKA_VERSION}" \
-            --notes "ARM64 / CUDA 12.8 wheels for lmcache ${WEKA_VERSION}"
+            --notes "ARM64 / CUDA 13.x wheels for lmcache ${WEKA_VERSION}"
