@@ -87,10 +87,14 @@ jobs:
         # Select the matching torch CUDA wheel tag (cu128 for CUDA 12.x, cu130
         # for CUDA 13.x) and the minimum SM for TORCH_CUDA_ARCH_LIST.
         # CUDA 13.x dropped SM 7.0 (Volta); minimum for 13.x is SM 7.5.
+        #
+        # Use nvidia-smi (CUDA runtime/driver version) rather than nvcc (toolkit
+        # compiler version) — torch's _check_cuda_version validates against the
+        # runtime, so the two can diverge when multiple CUDA toolkits are installed.
         run: |
-          CUDA_VER=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+')
+          CUDA_VER=$(nvidia-smi | grep -oP 'CUDA Version: \K[0-9]+\.[0-9]+')
           CUDA_MAJOR=${CUDA_VER%%.*}
-          echo "Detected CUDA: $CUDA_VER (major $CUDA_MAJOR)"
+          echo "Detected CUDA runtime: $CUDA_VER (major $CUDA_MAJOR)"
           case "$CUDA_MAJOR" in
             12)
               TORCH_VER="torch==2.9.1+cu128"
