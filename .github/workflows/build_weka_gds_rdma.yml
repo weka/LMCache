@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   build-wheels:
-    name: Build CUDA ARM64 wheels (CUDA 12.9)
+    name: Build CUDA ARM64 wheels (CUDA 12.8)
     runs-on: self-hosted
 
     # For pull_request events: only run if the source branch is a feat/weka* branch.
@@ -83,7 +83,7 @@ jobs:
           if [ -n "$NVCC" ]; then
             CUDA_HOME=$(dirname $(dirname "$NVCC"))
           else
-            for p in /usr/local/cuda /usr/local/cuda-12.9 /usr/local/cuda-12; do
+            for p in /usr/local/cuda /usr/local/cuda-12.8 /usr/local/cuda-12; do
               if [ -f "$p/bin/nvcc" ]; then CUDA_HOME="$p"; break; fi
             done
           fi
@@ -104,19 +104,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install build cibuildwheel
 
-      - name: Build CUDA wheels (manylinux_aarch64, CUDA 12.9)
+      - name: Build CUDA wheels (manylinux_aarch64, CUDA 12.8)
         # Base config is in pyproject.toml [tool.cibuildwheel] (targets x86_64 for the
         # upstream publish workflow). The env vars below override it for this ARM64 runner.
         # SETUPTOOLS_SCM_PRETEND_VERSION is injected into the container via
         # CIBW_ENVIRONMENT_PASS_LINUX, overriding automatic version detection.
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ env.SETUPTOOLS_SCM_PRETEND_VERSION }}
-          # CUDA_HOME is set dynamically by the "Detect CUDA installation path" step
-          # and passed into the cibuildwheel container via CIBW_ENVIRONMENT_PASS_LINUX
+          CUDA_HOME: /usr/local/cuda
           # Override build target: only Python 3.12, aarch64
           CIBW_BUILD: "cp312-manylinux_aarch64"
-          # PyTorch manylinux aarch64 builder image with CUDA 12.9
-          CIBW_MANYLINUX_AARCH64_IMAGE: "docker.io/pytorch/manylinuxaarch64-builder:cuda12.9"
+          # PyTorch manylinux aarch64 builder image with CUDA 12.8
+          CIBW_MANYLINUX_AARCH64_IMAGE: "docker.io/pytorch/manylinuxaarch64-builder:cuda12.8"
           # Repair wheel for aarch64 (mirrors pyproject.toml but with aarch64 plat)
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
             auditwheel repair
@@ -156,4 +155,4 @@ jobs:
           gh release create "${RELEASE_TAG}" dist/*.whl \
             --repo "${{ github.repository }}" \
             --title "Weka LMCache ${WEKA_VERSION}" \
-            --notes "ARM64 / CUDA 12.9 wheels for lmcache ${WEKA_VERSION}"
+            --notes "ARM64 / CUDA 12.8 wheels for lmcache ${WEKA_VERSION}"
