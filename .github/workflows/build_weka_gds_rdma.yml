@@ -80,22 +80,48 @@ jobs:
           python3 -m venv .venv
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
 
+      - name: Detect CUDA version
+        # Select the matching torch CUDA wheel tag (cu128 for CUDA 12.x, cu130
+        # for CUDA 13.x) and the minimum SM for TORCH_CUDA_ARCH_LIST.
+        # CUDA 13.x dropped SM 7.0 (Volta); minimum for 13.x is SM 7.5.
+        run: |
+          CUDA_VER=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+')
+          CUDA_MAJOR=${CUDA_VER%%.*}
+          echo "Detected CUDA: $CUDA_VER (major $CUDA_MAJOR)"
+          case "$CUDA_MAJOR" in
+            12)
+              TORCH_VER="2.9.1+cu128"
+              TORCH_URL="https://download.pytorch.org/whl/cu128"
+              ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0;10.0"
+              ;;
+            13)
+              TORCH_VER="2.9.1+cu130"
+              TORCH_URL="https://download.pytorch.org/whl/cu130"
+              ARCH_LIST="7.5;8.0;8.6;8.9;9.0;10.0"
+              ;;
+            *)
+              echo "::error::Unsupported CUDA major version: $CUDA_MAJOR"
+              exit 1
+              ;;
+          esac
+          echo "TORCH_VER=$TORCH_VER"       >> "$GITHUB_ENV"
+          echo "TORCH_URL=$TORCH_URL"       >> "$GITHUB_ENV"
+          echo "TORCH_CUDA_ARCH_LIST=$ARCH_LIST" >> "$GITHUB_ENV"
+
       - name: Install build dependencies
         # PyPI torch is CPU-only and lacks CUDA extension headers.
         # Install torch from PyTorch's CUDA wheel index so CUDA headers are present.
-        # cu130 matches the CUDA 13.x on the self-hosted GB10 runner.
         # Use --no-build-isolation so the build uses the already-installed CUDA torch
         # (as recommended in pyproject.toml and INSTALL_FROM_SOURCE.md).
         run: |
           pip install --upgrade pip
           pip install ninja 'packaging>=24.2' 'setuptools>=77.0.3,<81.0.0' 'setuptools_scm>=8' wheel
-          pip install 'torch==2.9.1+cu130' --index-url https://download.pytorch.org/whl/cu130
+          pip install "$TORCH_VER" --index-url "$TORCH_URL"
 
-      - name: Build wheel (CUDA 13.x, aarch64)
+      - name: Build wheel (aarch64)
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ env.SETUPTOOLS_SCM_PRETEND_VERSION }}
-          # CUDA 13.x dropped support for SM 7.0 (Volta).  Minimum is SM 7.5.
-          TORCH_CUDA_ARCH_LIST: "7.5;8.0;8.6;8.9;9.0;10.0"
+          TORCH_CUDA_ARCH_LIST: ${{ env.TORCH_CUDA_ARCH_LIST }}
           ENABLE_CXX11_ABI: "1"
         run: |
           rm -rf dist/
