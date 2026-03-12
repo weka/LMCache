@@ -13,8 +13,8 @@ on:
 
 env:
   LC_ALL: en_US.UTF-8
-  # Pass the computed Weka version into the cibuildwheel Docker container
-  CIBW_ENVIRONMENT_PASS_LINUX: SETUPTOOLS_SCM_PRETEND_VERSION
+  # Pass these host env vars into the cibuildwheel Docker container
+  CIBW_ENVIRONMENT_PASS_LINUX: "SETUPTOOLS_SCM_PRETEND_VERSION CUDA_HOME"
 
 defaults:
   run:
@@ -94,6 +94,7 @@ jobs:
         # CIBW_ENVIRONMENT_PASS_LINUX, overriding automatic version detection.
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ env.SETUPTOOLS_SCM_PRETEND_VERSION }}
+          CUDA_HOME: /usr/local/cuda
           # Override build target: only Python 3.12, aarch64
           CIBW_BUILD: "cp312-manylinux_aarch64"
           # PyTorch manylinux aarch64 builder image with CUDA 12.8
