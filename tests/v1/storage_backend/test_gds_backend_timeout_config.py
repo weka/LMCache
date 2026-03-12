@@ -1,8 +1,11 @@
-import os
-import pytest
+# SPDX-License-Identifier: Apache-2.0
+# Standard
 from unittest.mock import Mock, patch
-from lmcache.v1.storage_backend.gds_backend import get_config_value
+import os
+
+# First Party
 from lmcache.v1.config import LMCacheEngineConfig
+from lmcache.v1.storage_backend.gds_backend import get_config_value
 
 
 class TestConfigValue:
@@ -12,7 +15,7 @@ class TestConfigValue:
         """Test that default value is used when no env or config is set."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
-        
+
         value = get_config_value("timeout_test", config, 10.0)
         assert value == 10.0
 
@@ -20,7 +23,7 @@ class TestConfigValue:
         """Test that config value is used when env is not set."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_test": 15.0}
-        
+
         value = get_config_value("timeout_test", config, 10.0)
         assert value == 15.0
 
@@ -28,7 +31,7 @@ class TestConfigValue:
         """Test that config value works when provided as string."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_test": "20.5"}
-        
+
         value = get_config_value("timeout_test", config, 10.0)
         assert value == 20.5
 
@@ -37,7 +40,7 @@ class TestConfigValue:
         """Test that environment variable takes priority over config."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_test": 15.0}
-        
+
         value = get_config_value("timeout_test", config, 10.0)
         assert value == 25.0
 
@@ -46,7 +49,7 @@ class TestConfigValue:
         """Test that environment variable works with integer values."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
-        
+
         value = get_config_value("timeout_test", config, 10.0)
         assert value == 30.0
 
@@ -55,7 +58,7 @@ class TestConfigValue:
         """Test that invalid env value falls back to config."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_test": 15.0}
-        
+
         value = get_config_value("timeout_test", config, 10.0)
         assert value == 15.0
 
@@ -64,7 +67,7 @@ class TestConfigValue:
         """Test that invalid env value falls back to default when no config."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
-        
+
         value = get_config_value("timeout_test", config, 10.0)
         assert value == 10.0
 
@@ -73,7 +76,7 @@ class TestConfigValue:
         """Test the actual timeout_contains configuration."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_contains": 1.0}
-        
+
         value = get_config_value("timeout_contains", config, 1.0)
         assert value == 2.5
 
@@ -82,7 +85,7 @@ class TestConfigValue:
         """Test the actual timeout_get_blocking configuration."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
-        
+
         value = get_config_value("timeout_get_blocking", config, 5.0)
         assert value == 10.0
 
@@ -91,7 +94,7 @@ class TestConfigValue:
         """Test the actual timeout_batched_get_blocking configuration."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_batched_get_blocking": 7.0}
-        
+
         value = get_config_value("timeout_batched_get_blocking", config, 5.0)
         assert value == 15.0
 
@@ -99,7 +102,7 @@ class TestConfigValue:
         """Test that empty config dict uses default."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {}
-        
+
         value = get_config_value("timeout_test", config, 10.0)
         assert value == 10.0
 
@@ -108,7 +111,7 @@ class TestConfigValue:
         """Test that zero timeout can be set from environment."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
-        
+
         value = get_config_value("timeout_test", config, 10.0)
         assert value == 0.0
 
@@ -116,7 +119,7 @@ class TestConfigValue:
         """Test that zero timeout can be set from config."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_test": 0.0}
-        
+
         value = get_config_value("timeout_test", config, 10.0)
         assert value == 0.0
 
@@ -126,7 +129,7 @@ class TestConfigValue:
         """Test that default int value is used when no env or config is set."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
-        
+
         value = get_config_value("operation_manager_threads", config, 4, int)
         assert value == 4
         assert isinstance(value, int)
@@ -135,7 +138,7 @@ class TestConfigValue:
         """Test that config int value is used when env is not set."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"operation_manager_threads": 8}
-        
+
         value = get_config_value("operation_manager_threads", config, 4, int)
         assert value == 8
         assert isinstance(value, int)
@@ -144,7 +147,7 @@ class TestConfigValue:
         """Test that config int value works when provided as string."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"operation_manager_threads": "16"}
-        
+
         value = get_config_value("operation_manager_threads", config, 4, int)
         assert value == 16
         assert isinstance(value, int)
@@ -154,7 +157,7 @@ class TestConfigValue:
         """Test that environment variable takes priority for int values."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"operation_manager_threads": 8}
-        
+
         value = get_config_value("operation_manager_threads", config, 4, int)
         assert value == 12
         assert isinstance(value, int)
@@ -164,7 +167,7 @@ class TestConfigValue:
         """Test that invalid env value falls back to config for int."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"operation_manager_threads": 8}
-        
+
         value = get_config_value("operation_manager_threads", config, 4, int)
         assert value == 8
         assert isinstance(value, int)
@@ -174,7 +177,7 @@ class TestConfigValue:
         """Test that float env value gets truncated for int type."""
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
-        
+
         # int("3.5") raises ValueError, so it should fall back to default
         value = get_config_value("operation_manager_threads", config, 4, int)
         assert value == 4
