@@ -110,8 +110,14 @@ jobs:
           # Specifies the command to run after building a Linux wheel to repair it.
           # This command is used by cibuildwheel to make the wheel compatible with different Linux distributions
           # by bundling external shared libraries into the wheel using tools like auditwheel.
-          # Print env inside the container before the build runs
-          CIBW_BEFORE_BUILD: "echo '=== CUDA_HOME ===' && echo $CUDA_HOME && echo '=== SETUPTOOLS_SCM_PRETEND_VERSION ===' && echo $SETUPTOOLS_SCM_PRETEND_VERSION && echo '=== nvcc ===' && which nvcc || true"
+          # Pre-install build requirements so --no-isolation works.
+          # torch==2.8.0 is large but pip caches it on the self-hosted runner.
+          CIBW_BEFORE_BUILD: "pip install ninja 'packaging>=24.2' 'setuptools>=77.0.3,<81.0.0' 'setuptools_scm>=8' 'torch==2.8.0' wheel"
+          # Skip build isolation so setup.py runs in the container's main Python
+          # process, where CUDA_HOME (and all other env vars) are inherited directly.
+          # With isolation, pip reconstructs the subprocess environment and strips
+          # custom vars like CUDA_HOME before invoking the build backend.
+          CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
             auditwheel repair
             --plat manylinux_2_28_aarch64
