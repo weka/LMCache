@@ -110,6 +110,8 @@ jobs:
           # Specifies the command to run after building a Linux wheel to repair it.
           # This command is used by cibuildwheel to make the wheel compatible with different Linux distributions
           # by bundling external shared libraries into the wheel using tools like auditwheel.
+          # Print env inside the container before the build runs
+          CIBW_BEFORE_BUILD: "echo '=== CUDA_HOME ===' && echo $CUDA_HOME && echo '=== SETUPTOOLS_SCM_PRETEND_VERSION ===' && echo $SETUPTOOLS_SCM_PRETEND_VERSION && echo '=== nvcc ===' && which nvcc || true"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
             auditwheel repair
             --plat manylinux_2_28_aarch64
