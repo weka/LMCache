@@ -72,6 +72,14 @@ jobs:
           echo "SETUPTOOLS_SCM_PRETEND_VERSION=${WEKA_VERSION}" >> "$GITHUB_ENV"
           echo "Building version: ${WEKA_VERSION}"
 
+      - name: Set up Python venv
+        # The self-hosted runner uses Ubuntu with a PEP 668 system Python that
+        # rejects pip installs outside a venv.  Create one in the workspace so
+        # all subsequent steps share the same isolated environment.
+        run: |
+          python3 -m venv .venv
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+
       - name: Install build dependencies
         # PyPI torch is CPU-only and lacks CUDA extension headers.
         # Install torch from PyTorch's CUDA wheel index so CUDA headers are present.
@@ -79,7 +87,7 @@ jobs:
         # Use --no-build-isolation so the build uses the already-installed CUDA torch
         # (as recommended in pyproject.toml and INSTALL_FROM_SOURCE.md).
         run: |
-          python3 -m pip install --upgrade pip
+          pip install --upgrade pip
           pip install ninja 'packaging>=24.2' 'setuptools>=77.0.3,<81.0.0' 'setuptools_scm>=8' wheel
           pip install 'torch==2.9.1+cu130' --index-url https://download.pytorch.org/whl/cu130
 
