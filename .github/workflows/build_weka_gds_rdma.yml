@@ -76,7 +76,10 @@ jobs:
         # The self-hosted runner uses Ubuntu with a PEP 668 system Python that
         # rejects pip installs outside a venv.  Create one in the workspace so
         # all subsequent steps share the same isolated environment.
+        # Always recreate to avoid stale torch wheels from previous runs
+        # (e.g. a prior run on CUDA 13.x leaving torch+cu130 behind when now on 12.x).
         run: |
+          rm -rf .venv
           python3 -m venv .venv
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
 
