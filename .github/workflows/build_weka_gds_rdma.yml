@@ -158,5 +158,6 @@ jobs:
           RELEASE_TAG="v${WEKA_VERSION//+/-}"
           gh release create "${RELEASE_TAG}" dist/*.whl \
             --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
             --title "Weka LMCache ${WEKA_VERSION}" \
             --notes "ARM64 / CUDA 13.0 wheels for lmcache ${WEKA_VERSION} (torch 2.9.1+cu130, Python 3.12)"
