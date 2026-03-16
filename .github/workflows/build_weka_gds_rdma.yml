@@ -48,15 +48,10 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch upstream tags for version detection
-        # Fetches from two remotes:
-        #   1. origin (weka/lmcache) — picks up weka-v* base tags
-        #   2. upstream (LMCache/LMCache) — gets canonical v0.x.y release tags
-        #      Only tags are fetched (refs/tags/*:refs/tags/*), no branches,
-        #      so upstream/dev never conflicts with origin/dev.
-        #
-        # Tagging convention — after each rebase onto upstream vX.Y.Z, run:
-        #   git tag weka-v0.3.14 && git push origin weka-v0.3.14
-        # The workflow then produces version: 0.3.14+weka.<commits-since-tag>
+        # Fetches upstream (LMCache/LMCache) tags to automatically determine the base
+        # version. Only tags are fetched (refs/tags/*:refs/tags/*), no branches.
+        # The version computation finds the most recent upstream v* tag reachable from
+        # HEAD and counts commits since then: 0.3.14+weka.<commits-since-v0.3.14>
         run: |
           git fetch origin --tags
           git remote add upstream https://github.com/LMCache/LMCache.git 2>/dev/null || git remote set-url upstream https://github.com/LMCache/LMCache.git
@@ -65,18 +60,18 @@ jobs:
       - name: Compute Weka version
         id: version
         run: |
-          # Find the most recent weka-v* tag reachable from HEAD.
-          # This tag is created manually after each upstream rebase (see above).
-          WEKA_BASE_TAG=$(git describe --tags --match "weka-v*" --abbrev=0 2>/dev/null || echo "")
+          # Find the most recent upstream v* tag reachable from HEAD.
+          # Exclude CI-generated v*-weka* tags to find the true upstream base version.
+          UPSTREAM_TAG=$(git describe --tags --match "v*" --exclude "v*-weka*" --abbrev=0 2>/dev/null || echo "")
 
-          if [ -n "$WEKA_BASE_TAG" ]; then
-            # Strip "weka-v" prefix to get the upstream version number (e.g. "0.3.14")
-            UPSTREAM_VERSION="${WEKA_BASE_TAG#weka-v}"
-            # Count commits added by Weka on top of this tag
-            WEKA_COMMITS=$(git rev-list "${WEKA_BASE_TAG}..HEAD" --count)
+          if [ -n "$UPSTREAM_TAG" ]; then
+            # Strip "v" prefix to get the upstream version number (e.g. "0.3.14")
+            UPSTREAM_VERSION="${UPSTREAM_TAG#v}"
+            # Count commits added by Weka on top of this upstream tag
+            WEKA_COMMITS=$(git rev-list "${UPSTREAM_TAG}..HEAD" --count)
           else
-            # Fallback: no weka-v* tag found — use 0.0.0 and total commit count
-            echo "::warning::No weka-v* tag found. Create one after each upstream rebase (e.g. git tag weka-v0.3.14)."
+            # Fallback: no upstream v* tag found — use 0.0.0 and total commit count
+            echo "::warning::No upstream v* tag found. Using fallback version."
             UPSTREAM_VERSION="0.0.0"
             WEKA_COMMITS=$(git rev-list HEAD --count)
           fi
