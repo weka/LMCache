@@ -499,14 +499,12 @@ class GdsBackend(AllocatorBackendInterface):
             num_threads=num_op_manager_threads,
             logger=logger,
         )
-        self.timeout_contains = get_config_value(
-            "timeout_contains", config, 10.0, float
-        )
+        self.timeout_contains = get_config_value("timeout_contains", config, 1.0, float)
         self.timeout_get_blocking = get_config_value(
-            "timeout_get_blocking", config, 10.0, float
+            "timeout_get_blocking", config, 5.0, float
         )
         self.timeout_batched_get_blocking = get_config_value(
-            "timeout_batched_get_blocking", config, 10.0, float
+            "timeout_batched_get_blocking", config, 5.0, float
         )
 
         if self.use_cufile:
