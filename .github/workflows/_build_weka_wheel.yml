@@ -1,0 +1,119 @@
+name: Build Weka Wheel (Reusable)
+
+# Reusable workflow for building Weka CUDA wheels
+# Called by both build_weka_gds_rdma.yml and test_weka_gds_rdma.yml
+
+on:
+  workflow_call:
+    inputs:
+      arch:
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
+      cibw_build:
+        required: true
+        type: string
+      cibw_image:
+        required: true
+        type: string
+      plat:
+        required: true
+        type: string
+    outputs:
+      weka_version:
+        description: "The computed Weka version"
+        value: ${{ jobs.build.outputs.weka_version }}
+
+env:
+  LC_ALL: en_US.UTF-8
+  CIBW_ENVIRONMENT_PASS_LINUX: SETUPTOOLS_SCM_PRETEND_VERSION
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build CUDA wheel (${{ inputs.arch }}, CUDA 13.0)
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      weka_version: ${{ steps.version.outputs.weka_version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream tags for version detection
+        run: |
+          git fetch origin --tags
+          git remote add upstream https://github.com/LMCache/LMCache.git 2>/dev/null || git remote set-url upstream https://github.com/LMCache/LMCache.git
+          git fetch upstream 'refs/tags/*:refs/tags/*' --no-recurse-submodules
+
+      - name: Compute Weka version
+        id: version
+        run: |
+          UPSTREAM_TAG=$(git describe --tags --match "v*" --exclude "v*-weka*" --abbrev=0 2>/dev/null || echo "")
+
+          if [ -n "$UPSTREAM_TAG" ]; then
+            UPSTREAM_VERSION="${UPSTREAM_TAG#v}"
+            WEKA_COMMITS=$(git rev-list "${UPSTREAM_TAG}..HEAD" --count)
+          else
+            echo "::warning::No upstream v* tag found. Using fallback version."
+            UPSTREAM_VERSION="0.0.0"
+            WEKA_COMMITS=$(git rev-list HEAD --count)
+          fi
+
+          WEKA_VERSION="${UPSTREAM_VERSION}+weka.${WEKA_COMMITS}"
+          echo "weka_version=${WEKA_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "SETUPTOOLS_SCM_PRETEND_VERSION=${WEKA_VERSION}" >> "$GITHUB_ENV"
+          echo "Building version: ${WEKA_VERSION}"
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build cibuildwheel
+
+      - name: Build CUDA wheel (${{ inputs.arch }}, CUDA 13.0)
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ env.SETUPTOOLS_SCM_PRETEND_VERSION }}
+          CIBW_BUILD: ${{ inputs.cibw_build }}
+          CIBW_MANYLINUX_AARCH64_IMAGE: ${{ inputs.cibw_image }}
+          CIBW_MANYLINUX_X86_64_IMAGE: ${{ inputs.cibw_image }}
+          CIBW_BEFORE_ALL_LINUX: >-
+            sed -i 's/torch==2.8.0/torch==2.9.1+cu130/'
+            /project/pyproject.toml
+          CIBW_ENVIRONMENT: >-
+            TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0;10.0"
+            ENABLE_CXX11_ABI="1"
+            CUDA_HOME="/usr/local/cuda"
+            PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cu130"
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+            auditwheel repair
+            --plat ${{ inputs.plat }}
+            --exclude libtorch.so
+            --exclude libtorch_cuda.so
+            --exclude libtorch_python.so
+            --exclude libtorch_cpu.so
+            --exclude libc10.so
+            --exclude libc10_cuda.so
+            --exclude libcudart.so.13
+            -w {dest_dir} {wheel}
+        run: |
+          rm -rf dist/
+          python -m cibuildwheel --output-dir dist
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: weka-wheel-${{ steps.version.outputs.weka_version }}-${{ github.run_id }}
+          path: dist/*.whl
+          retention-days: 1
