@@ -89,6 +89,7 @@ jobs:
             --cov-report=html:/github/workspace/coverage-test \
             --cov-report=xml:/github/workspace/coverage-test.xml \
             --html=/github/workspace/durations/test.html \
+            --ignore=tests/benchmarks \
             --ignore=tests/disagg \
             --ignore=tests/v1/test_pos_kernels.py \
             --ignore=tests/v1/test_nixl_storage.py \
