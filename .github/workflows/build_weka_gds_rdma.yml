@@ -72,13 +72,16 @@ jobs:
 
       - name: Run pytest
         run: |
+          # Copy tests to a temp directory to avoid importing from source
+          cp -r tests /tmp/tests
+          cd /tmp
           python3.12 -m pytest \
             --maxfail=1 \
             --cov=lmcache \
             --cov-report term \
-            --cov-report=html:coverage-test \
-            --cov-report=xml:coverage-test.xml \
-            --html=durations/test.html \
+            --cov-report=html:/github/workspace/coverage-test \
+            --cov-report=xml:/github/workspace/coverage-test.xml \
+            --html=/github/workspace/durations/test.html \
             --ignore=tests/disagg \
             --ignore=tests/v1/test_pos_kernels.py \
             --ignore=tests/v1/test_nixl_storage.py \
