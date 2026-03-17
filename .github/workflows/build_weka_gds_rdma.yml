@@ -108,6 +108,15 @@ jobs:
             durations/test.html
           retention-days: 30
 
+      - name: Cleanup workspace
+        if: always()
+        run: |
+          # Fix permissions and clean up workspace for next run
+          chmod -R 777 /github/workspace || true
+          rm -rf /github/workspace/* || true
+          rm -rf /github/workspace/.git || true
+          rm -rf /github/workspace/.github || true
+
   publish:
     name: Publish wheels
     needs: [build-wheels, test]
