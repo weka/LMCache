@@ -45,7 +45,7 @@ jobs:
 
     container:
       image: docker.io/pytorch/manylinuxaarch64-builder:cuda13.0
-      options: --gpus all
+      options: --gpus all --user 1000:1000
 
     steps:
       - name: Checkout code
@@ -60,14 +60,18 @@ jobs:
 
       - name: Setup Python 3.12
         run: |
+          # Use the Python 3.12 that's already in the container
           python3.12 -m pip install --upgrade pip
 
       - name: Install wheel and test dependencies
         env:
           PIP_EXTRA_INDEX_URL: "https://download.pytorch.org/whl/cu130"
         run: |
+          # First install torch with CUDA support
           python3.12 -m pip install torch==2.9.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
+          # Then install the lmcache wheel
           python3.12 -m pip install dist/*.whl
+          # Finally install test dependencies
           python3.12 -m pip install -r requirements/test.txt
 
       - name: Run pytest
@@ -75,6 +79,7 @@ jobs:
           CUDA_HOME: /usr/local/cuda
           LD_LIBRARY_PATH: /usr/local/cuda/lib64:/opt/_internal/cpython-3.12.8/lib:$LD_LIBRARY_PATH
         run: |
+          # Copy tests to a temp directory to avoid importing from source
           cp -r tests /tmp/tests
           cd /tmp
           python3.12 -m pytest \
