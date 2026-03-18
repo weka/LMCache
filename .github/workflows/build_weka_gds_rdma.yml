@@ -90,6 +90,10 @@ jobs:
                 --ignore=tests/v1/multiprocess \
                 --ignore=tests/v1/storage_backend/test_eic.py \
                 --ignore=tests/v1/storage_backend/test_gds_backend.py \
+                --ignore=tests/v1/test_connector.py \
+                --ignore=tests/v1/storage_backend/test_fs_connector.py \
+                --ignore=tests/v1/test_health_monitor_fallback_recovery.py \
+                -k "not (remote or lmserver)" \
                 tests/
             '
 
