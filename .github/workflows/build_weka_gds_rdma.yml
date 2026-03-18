@@ -58,13 +58,6 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Prepare workspace directories
-        run: |
-          mkdir -p /github/workspace/coverage-test
-          mkdir -p /github/workspace/durations
-          chmod 777 /github/workspace/coverage-test
-          chmod 777 /github/workspace/durations
-
       - name: Setup Python 3.12
         run: |
           # Use the Python 3.12 that's already in the container
