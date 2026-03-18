@@ -43,10 +43,6 @@ jobs:
     needs: build-wheels
     runs-on: self-hosted
 
-    container:
-      image: docker.io/pytorch/manylinuxaarch64-builder:cuda13.0
-      options: --gpus all --user 1000:1000
-
     steps:
       - name: Checkout code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -58,45 +54,42 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Setup Python 3.12
+      - name: Run tests in Docker
         run: |
-          # Use the Python 3.12 that's already in the container
-          python3.12 -m pip install --upgrade pip
-
-      - name: Install wheel and test dependencies
-        env:
-          PIP_EXTRA_INDEX_URL: "https://download.pytorch.org/whl/cu130"
-        run: |
-          # First install torch with CUDA support
-          python3.12 -m pip install torch==2.9.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
-          # Then install the lmcache wheel
-          python3.12 -m pip install dist/*.whl
-          # Finally install test dependencies
-          python3.12 -m pip install -r requirements/test.txt
-
-      - name: Run pytest
-        env:
-          CUDA_HOME: /usr/local/cuda
-          LD_LIBRARY_PATH: /usr/local/cuda/lib64:/opt/_internal/cpython-3.12.8/lib:$LD_LIBRARY_PATH
-        run: |
-          # Copy tests to temp and run there to avoid importing from source
-          cp -r tests /tmp/tests
-          cd /tmp
-          python3.12 -m pytest \
-            --maxfail=1 \
-            --cov=lmcache \
-            --cov-report term \
-            --cov-report=html:/github/workspace/coverage-test \
-            --cov-report=xml:/github/workspace/coverage-test.xml \
-            --html=/github/workspace/durations/test.html \
-            --ignore=tests/benchmarks \
-            --ignore=tests/disagg \
-            --ignore=tests/v1/test_pos_kernels.py \
-            --ignore=tests/v1/test_nixl_storage.py \
-            --ignore=tests/skipped \
-            --ignore=tests/v1/multiprocess \
-            --ignore=tests/v1/storage_backend/test_eic.py \
-            tests/
+          docker run --rm \
+            --gpus all \
+            --user $(id -u):$(id -g) \
+            -v $PWD:/workspace \
+            -w /workspace \
+            docker.io/pytorch/manylinuxaarch64-builder:cuda13.0 \
+            bash -c '
+              export CUDA_HOME=/usr/local/cuda
+              export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/_internal/cpython-3.12.8/lib
+              export PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu130
+              
+              python3.12 -m pip install --user --upgrade pip
+              python3.12 -m pip install --user torch==2.9.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
+              python3.12 -m pip install --user dist/*.whl
+              python3.12 -m pip install --user -r requirements/test.txt
+              
+              cd /tmp
+              cp -r /workspace/tests .
+              python3.12 -m pytest \
+                --maxfail=1 \
+                --cov=lmcache \
+                --cov-report term \
+                --cov-report=html:/workspace/coverage-test \
+                --cov-report=xml:/workspace/coverage-test.xml \
+                --html=/workspace/test.html \
+                --ignore=tests/benchmarks \
+                --ignore=tests/disagg \
+                --ignore=tests/v1/test_pos_kernels.py \
+                --ignore=tests/v1/test_nixl_storage.py \
+                --ignore=tests/skipped \
+                --ignore=tests/v1/multiprocess \
+                --ignore=tests/v1/storage_backend/test_eic.py \
+                tests/
+            '
 
       - name: Upload test results
         if: always()
@@ -106,7 +99,7 @@ jobs:
           path: |
             coverage-test/
             coverage-test.xml
-            durations/test.html
+            test.html
           retention-days: 30
 
   publish:
