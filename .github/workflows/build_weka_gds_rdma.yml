@@ -58,6 +58,13 @@ jobs:
           merge-multiple: true
           path: dist
 
+      - name: Prepare workspace directories
+        run: |
+          mkdir -p /github/workspace/coverage-test
+          mkdir -p /github/workspace/durations
+          chmod 777 /github/workspace/coverage-test
+          chmod 777 /github/workspace/durations
+
       - name: Setup Python 3.12
         run: |
           # Use the Python 3.12 that's already in the container
@@ -79,7 +86,7 @@ jobs:
           CUDA_HOME: /usr/local/cuda
           LD_LIBRARY_PATH: /usr/local/cuda/lib64:/opt/_internal/cpython-3.12.8/lib:$LD_LIBRARY_PATH
         run: |
-          # Copy tests to a temp directory to avoid importing from source
+          # Copy tests to temp and run there to avoid importing from source
           cp -r tests /tmp/tests
           cd /tmp
           python3.12 -m pytest \
@@ -108,17 +115,6 @@ jobs:
             coverage-test.xml
             durations/test.html
           retention-days: 30
-
-      - name: Cleanup test artifacts
-        if: always()
-        run: |
-          # Clean up files created during testing so the host can clean the workspace
-          rm -rf /github/workspace/dist
-          rm -rf /github/workspace/coverage-test
-          rm -rf /github/workspace/durations
-          rm -rf /github/workspace/.pytest_cache
-          find /github/workspace -name "*.pyc" -delete
-          find /github/workspace -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
   publish:
     name: Publish wheels
