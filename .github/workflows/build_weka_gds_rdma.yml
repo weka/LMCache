@@ -45,7 +45,7 @@ jobs:
 
     container:
       image: docker.io/pytorch/manylinuxaarch64-builder:cuda13.0
-      options: --gpus all
+      options: --gpus all --user 1000:1000
 
     steps:
       - name: Checkout code
@@ -108,15 +108,6 @@ jobs:
             coverage-test.xml
             durations/test.html
           retention-days: 30
-
-      - name: Cleanup workspace
-        if: always()
-        run: |
-          # Fix permissions and clean up workspace for next run
-          chmod -R 777 /github/workspace || true
-          rm -rf /github/workspace/* || true
-          rm -rf /github/workspace/.git || true
-          rm -rf /github/workspace/.github || true
 
   publish:
     name: Publish wheels
