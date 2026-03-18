@@ -60,14 +60,55 @@ jobs:
           GDS_TEST_DIR=$(mktemp -d)
           chmod 777 "$GDS_TEST_DIR"
           
+          # Create cufile.json with compatibility mode enabled
+          cat > /tmp/cufile.json << 'EOF'
+          {
+            "logging": {
+              "dir": "/tmp",
+              "level": "ERROR"
+            },
+            "profile": {
+              "nvtx": false,
+              "cufile_stats": 0
+            },
+            "execution": {
+              "max_io_threads": 4,
+              "max_io_queue_depth": 128,
+              "parallel_io": true,
+              "min_io_threshold_size_kb": 8192,
+              "max_request_parallelism": 4
+            },
+            "properties": {
+              "use_compat_mode": true,
+              "force_compat_mode": true,
+              "gds_batch_size": 128,
+              "use_poll_mode": false,
+              "poll_mode_max_size_kb": 4,
+              "allow_compat_mode": true
+            },
+            "fs": {
+              "generic": {
+                "posix_unaligned_writes": true
+              }
+            },
+            "denylist": {
+              "drivers": [],
+              "filesystems": [],
+              "platforms": []
+            }
+          }
+          EOF
+          
           docker run --rm \
             --gpus all \
             --user $(id -u):$(id -g) \
             -v $PWD:/workspace \
             -v "$GDS_TEST_DIR:/gds_test_dir" \
+            -v /tmp/cufile.json:/etc/cufile.json:ro \
             -w /workspace \
             -e HOME=/tmp \
             -e TMPDIR=/gds_test_dir \
+            -e CUFILE_ENV_PATH_JSON=/etc/cufile.json \
             docker.io/pytorch/manylinuxaarch64-builder:cuda13.0 \
             bash -c '
               export CUDA_HOME=/usr/local/cuda
@@ -98,7 +139,8 @@ jobs:
                 tests/
             '
           
-          # Clean up the temporary directory
+          # Clean up
+          rm -f /tmp/cufile.json
           rm -rf "$GDS_TEST_DIR"
 
       - name: Upload test results
