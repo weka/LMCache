@@ -56,12 +56,18 @@ jobs:
 
       - name: Run tests in Docker
         run: |
+          # Create a temporary directory on the host for GDS tests
+          GDS_TEST_DIR=$(mktemp -d)
+          chmod 777 "$GDS_TEST_DIR"
+          
           docker run --rm \
             --gpus all \
             --user $(id -u):$(id -g) \
             -v $PWD:/workspace \
+            -v "$GDS_TEST_DIR:/gds_test_dir" \
             -w /workspace \
             -e HOME=/tmp \
+            -e TMPDIR=/gds_test_dir \
             docker.io/pytorch/manylinuxaarch64-builder:cuda13.0 \
             bash -c '
               export CUDA_HOME=/usr/local/cuda
@@ -91,6 +97,9 @@ jobs:
                 --ignore=tests/v1/storage_backend/test_eic.py \
                 tests/
             '
+          
+          # Clean up the temporary directory
+          rm -rf "$GDS_TEST_DIR"
 
       - name: Upload test results
         if: always()
