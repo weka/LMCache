@@ -16,7 +16,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
 
-        value = get_config_value("timeout_test", config, 10.0)
+        value = get_config_value("timeout_test", config, 10.0, float)
         assert value == 10.0
 
     def test_float_from_config(self):
@@ -24,7 +24,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_test": 15.0}
 
-        value = get_config_value("timeout_test", config, 10.0)
+        value = get_config_value("timeout_test", config, 10.0, float)
         assert value == 15.0
 
     def test_float_from_config_as_string(self):
@@ -32,7 +32,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_test": "20.5"}
 
-        value = get_config_value("timeout_test", config, 10.0)
+        value = get_config_value("timeout_test", config, 10.0, float)
         assert value == 20.5
 
     @patch.dict(os.environ, {"LMCACHE_TIMEOUT_TEST": "25.0"})
@@ -41,7 +41,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_test": 15.0}
 
-        value = get_config_value("timeout_test", config, 10.0)
+        value = get_config_value("timeout_test", config, 10.0, float)
         assert value == 25.0
 
     @patch.dict(os.environ, {"LMCACHE_TIMEOUT_TEST": "30"})
@@ -50,7 +50,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
 
-        value = get_config_value("timeout_test", config, 10.0)
+        value = get_config_value("timeout_test", config, 10.0, float)
         assert value == 30.0
 
     @patch.dict(os.environ, {"LMCACHE_TIMEOUT_TEST": "invalid"})
@@ -59,7 +59,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_test": 15.0}
 
-        value = get_config_value("timeout_test", config, 10.0)
+        value = get_config_value("timeout_test", config, 10.0, float)
         assert value == 15.0
 
     @patch.dict(os.environ, {"LMCACHE_TIMEOUT_TEST": "invalid"})
@@ -68,7 +68,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
 
-        value = get_config_value("timeout_test", config, 10.0)
+        value = get_config_value("timeout_test", config, 10.0, float)
         assert value == 10.0
 
     @patch.dict(os.environ, {"LMCACHE_TIMEOUT_CONTAINS": "2.5"})
@@ -77,7 +77,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_contains": 1.0}
 
-        value = get_config_value("timeout_contains", config, 1.0)
+        value = get_config_value("timeout_contains", config, 1.0, float)
         assert value == 2.5
 
     @patch.dict(os.environ, {"LMCACHE_TIMEOUT_GET_BLOCKING": "10.0"})
@@ -86,7 +86,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
 
-        value = get_config_value("timeout_get_blocking", config, 5.0)
+        value = get_config_value("timeout_get_blocking", config, 5.0, float)
         assert value == 10.0
 
     @patch.dict(os.environ, {"LMCACHE_TIMEOUT_BATCHED_GET_BLOCKING": "15.0"})
@@ -95,7 +95,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_batched_get_blocking": 7.0}
 
-        value = get_config_value("timeout_batched_get_blocking", config, 5.0)
+        value = get_config_value("timeout_batched_get_blocking", config, 5.0, float)
         assert value == 15.0
 
     def test_float_config_empty_dict(self):
@@ -103,7 +103,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {}
 
-        value = get_config_value("timeout_test", config, 10.0)
+        value = get_config_value("timeout_test", config, 10.0, float)
         assert value == 10.0
 
     @patch.dict(os.environ, {"LMCACHE_TIMEOUT_TEST": "0.0"})
@@ -112,7 +112,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = None
 
-        value = get_config_value("timeout_test", config, 10.0)
+        value = get_config_value("timeout_test", config, 10.0, float)
         assert value == 0.0
 
     def test_float_zero_from_config(self):
@@ -120,7 +120,7 @@ class TestConfigValue:
         config = Mock(spec=LMCacheEngineConfig)
         config.extra_config = {"timeout_test": 0.0}
 
-        value = get_config_value("timeout_test", config, 10.0)
+        value = get_config_value("timeout_test", config, 10.0, float)
         assert value == 0.0
 
     # Integer type tests (for operation_manager_threads, etc.)
