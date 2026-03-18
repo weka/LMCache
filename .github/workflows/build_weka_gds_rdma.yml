@@ -61,6 +61,7 @@ jobs:
             --user $(id -u):$(id -g) \
             -v $PWD:/workspace \
             -w /workspace \
+            -e HOME=/tmp \
             docker.io/pytorch/manylinuxaarch64-builder:cuda13.0 \
             bash -c '
               export CUDA_HOME=/usr/local/cuda
