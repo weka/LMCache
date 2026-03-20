@@ -42,6 +42,10 @@ jobs:
     name: Run unit tests (native)
     needs: build-wheels
     runs-on: self-hosted
+    env:
+      VENV_PATH: ${{ github.workspace }}/.venv-test
+      CUDA_HOME: /usr/local/cuda
+      PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu130
 
     steps:
       - name: Checkout code
@@ -54,48 +58,30 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Set up Python 3.12 with pyenv
+      - name: Create virtual environment and install dependencies
         run: |
-          # Install pyenv if not present
-          if [ ! -d "$HOME/.pyenv" ]; then
-            curl https://pyenv.run | bash
-          fi
+          # Use system Python 3.12 to create venv
+          python3.12 -m venv "$VENV_PATH"
           
-          export PYENV_ROOT="$HOME/.pyenv"
-          export PATH="$PYENV_ROOT/bin:$PATH"
-          eval "$(pyenv init -)"
+          # Activate and install
+          source "$VENV_PATH/bin/activate"
           
-          # Install Python 3.12 if not already installed
-          pyenv install -s 3.12
-          pyenv local 3.12
-          
-          # Verify Python version
-          python --version
-
-      - name: Install dependencies
-        run: |
-          export PYENV_ROOT="$HOME/.pyenv"
-          export PATH="$PYENV_ROOT/bin:$PATH"
-          eval "$(pyenv init -)"
-          pyenv local 3.12
-          
-          export CUDA_HOME=/usr/local/cuda
           export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-          export PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu130
           
           python -m pip install --upgrade pip
           python -m pip install torch==2.9.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
           python -m pip install dist/*.whl
           python -m pip install -r requirements/test.txt
+          
+          # Verify installation
+          python --version
+          python -c "import torch; print(f'PyTorch {torch.__version__}')"
+          python -c "import lmcache; print(f'LMCache installed')"
 
       - name: Run tests natively
         run: |
-          export PYENV_ROOT="$HOME/.pyenv"
-          export PATH="$PYENV_ROOT/bin:$PATH"
-          eval "$(pyenv init -)"
-          pyenv local 3.12
+          source "$VENV_PATH/bin/activate"
           
-          export CUDA_HOME=/usr/local/cuda
           export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
           
           mkdir -p durations
@@ -114,6 +100,10 @@ jobs:
             --ignore=tests/v1/multiprocess \
             --ignore=tests/v1/storage_backend/test_eic.py \
             tests/
+
+      - name: Cleanup virtual environment
+        if: always()
+        run: rm -rf "$VENV_PATH"
 
       - name: Upload test results
         if: always()
