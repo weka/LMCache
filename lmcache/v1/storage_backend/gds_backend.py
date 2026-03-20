@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Standard
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, List, Optional, Sequence, Tuple, TypeVar, Union
 import asyncio
 import ctypes
 import json
@@ -48,31 +48,28 @@ _METADATA_MAX_SIZE = 4096  # reserve 4K for metadata.
 _DEFAULT_THREAD_COUNT = 4
 
 
-from collections import deque
-
-
 class GdsBackendStats:
     """Statistics tracking for GDS backend operations. Lock-free for real-time use.
-    
+
     Tracks metrics to help diagnose performance bottlenecks:
     - Thread pool utilization (queue depth, in-flight operations)
     - Per-operation latency statistics
     - Hot cache hit/miss rates
     - I/O operation counts and throughput
-    
-    Uses simple counter increments (atomic under GIL) and thread-safe deques.
+
+    Uses simple counter increments (atomic under GIL) and thread-safe dequeues.
     """
-    
+
     def __init__(self, max_latency_samples: int = 1000):
         # Hot cache stats (simple counters - GIL provides atomicity)
         self.hot_cache_hits = 0
         self.hot_cache_misses = 0
-        
+
         # Slow path (disk) stats
         self.disk_lookups = 0
         self.disk_lookup_hits = 0
         self.disk_lookup_misses = 0
-        
+
         # Read/write stats
         self.gds_reads = 0
         self.gds_read_bytes = 0
@@ -80,63 +77,63 @@ class GdsBackendStats:
         self.gds_writes = 0
         self.gds_write_bytes = 0
         self.gds_write_errors = 0
-        
+
         # Batched operation stats
         self.batched_contains_calls = 0
         self.batched_contains_total_keys = 0
         self.batched_get_calls = 0
         self.batched_get_total_keys = 0
-        
-        # Latency tracking using thread-safe deques with maxlen
+
+        # Latency tracking using thread-safe dequeues with maxlen
         self._max_latency_samples = max_latency_samples
         self.contains_latencies: deque[float] = deque(maxlen=max_latency_samples)
         self.get_blocking_latencies: deque[float] = deque(maxlen=max_latency_samples)
         self.batched_get_latencies: deque[float] = deque(maxlen=max_latency_samples)
-    
+
     def record_hot_cache_hit(self) -> None:
         self.hot_cache_hits += 1
-    
+
     def record_hot_cache_miss(self) -> None:
         self.hot_cache_misses += 1
-    
+
     def record_disk_lookup(self, hit: bool) -> None:
         self.disk_lookups += 1
         if hit:
             self.disk_lookup_hits += 1
         else:
             self.disk_lookup_misses += 1
-    
+
     def record_gds_read(self, bytes_read: int, success: bool) -> None:
         self.gds_reads += 1
         if success:
             self.gds_read_bytes += bytes_read
         else:
             self.gds_read_errors += 1
-    
+
     def record_gds_write(self, bytes_written: int, success: bool) -> None:
         self.gds_writes += 1
         if success:
             self.gds_write_bytes += bytes_written
         else:
             self.gds_write_errors += 1
-    
+
     def record_batched_contains(self, num_keys: int) -> None:
         self.batched_contains_calls += 1
         self.batched_contains_total_keys += num_keys
-    
+
     def record_batched_get(self, num_keys: int) -> None:
         self.batched_get_calls += 1
         self.batched_get_total_keys += num_keys
-    
+
     def record_contains_latency(self, latency_ms: float) -> None:
         self.contains_latencies.append(latency_ms)
-    
+
     def record_get_blocking_latency(self, latency_ms: float) -> None:
         self.get_blocking_latencies.append(latency_ms)
-    
+
     def record_batched_get_latency(self, latency_ms: float) -> None:
         self.batched_get_latencies.append(latency_ms)
-    
+
     def _compute_latency_stats(self, latencies: deque[float]) -> dict:
         """Compute min/max/avg/p50/p95/p99 from latency samples."""
         if not latencies:
@@ -149,16 +146,16 @@ class GdsBackendStats:
                 "p95_ms": 0.0,
                 "p99_ms": 0.0,
             }
-        
+
         # Take a snapshot to avoid iteration issues
         snapshot = list(latencies)
         sorted_latencies = sorted(snapshot)
         count = len(sorted_latencies)
-        
+
         def percentile(p: float) -> float:
             idx = int(count * p / 100)
             return sorted_latencies[min(idx, count - 1)]
-        
+
         return {
             "count": count,
             "min_ms": round(sorted_latencies[0], 3),
@@ -168,14 +165,14 @@ class GdsBackendStats:
             "p95_ms": round(percentile(95), 3),
             "p99_ms": round(percentile(99), 3),
         }
-    
+
     def get_summary_line(self) -> str:
         """Return a single-line summary for logging on timeout."""
         total_cache = self.hot_cache_hits + self.hot_cache_misses
         hit_rate = self.hot_cache_hits / total_cache if total_cache > 0 else 0.0
-        
+
         contains_stats = self._compute_latency_stats(self.contains_latencies)
-        
+
         return (
             f"hot_cache_hit_rate={hit_rate:.2%} | "
             f"disk_lookups={self.disk_lookups} (hits={self.disk_lookup_hits}) | "
@@ -183,20 +180,20 @@ class GdsBackendStats:
             f"contains_latency: avg={contains_stats['avg_ms']:.1f}ms "
             f"p99={contains_stats['p99_ms']:.1f}ms"
         )
-    
+
     def to_dict(self) -> dict:
         """Return all stats as a dictionary for logging/monitoring."""
         total_cache_accesses = self.hot_cache_hits + self.hot_cache_misses
         hot_cache_hit_rate = (
-            self.hot_cache_hits / total_cache_accesses 
-            if total_cache_accesses > 0 else 0.0
+            self.hot_cache_hits / total_cache_accesses
+            if total_cache_accesses > 0
+            else 0.0
         )
-        
+
         disk_hit_rate = (
-            self.disk_lookup_hits / self.disk_lookups 
-            if self.disk_lookups > 0 else 0.0
+            self.disk_lookup_hits / self.disk_lookups if self.disk_lookups > 0 else 0.0
         )
-        
+
         return {
             "hot_cache": {
                 "hits": self.hot_cache_hits,
@@ -225,11 +222,13 @@ class GdsBackendStats:
             },
             "latency": {
                 "contains": self._compute_latency_stats(self.contains_latencies),
-                "get_blocking": self._compute_latency_stats(self.get_blocking_latencies),
+                "get_blocking": self._compute_latency_stats(
+                    self.get_blocking_latencies
+                ),
                 "batched_get": self._compute_latency_stats(self.batched_get_latencies),
             },
         }
-    
+
     def reset(self) -> dict:
         """Reset all stats and return the old values."""
         old_stats = self.to_dict()
@@ -374,24 +373,22 @@ def get_extra_config_bool(key, config: LMCacheEngineConfig) -> bool | None:
     return bool_value
 
 
-from typing import TypeVar
-
 T = TypeVar("T", int, float)
 
 
 def get_config_value(
-    key: str, config: LMCacheEngineConfig, default: T, value_type: type[T] = float
+    key: str, config: LMCacheEngineConfig, default: T, value_type: type[T]
 ) -> T:
     """
-    Get a configuration value from environment variable or config, with 
+    Get a configuration value from environment variable or config, with
     environment taking priority.
-    
+
     Args:
         key: The config key name (e.g., "timeout_contains", "operation_manager_threads")
         config: The LMCache engine config
         default: Default value if not found in env or config
         value_type: The type to convert the value to (int or float)
-        
+
     Returns:
         The configuration value converted to the specified type
     """
@@ -405,16 +402,17 @@ def get_config_value(
             return value
         except ValueError:
             logger.warning(
-                f"Invalid value '{env_value}' for {env_name}, falling back to config/default"
+                f"Invalid value '{env_value}' for {env_name}, falling back to "
+                f"config/default"
             )
-    
+
     # Fall back to config
     if config.extra_config is not None:
         value = config.extra_config.get(key, default)
         if value != default:
             logger.info(f"Using {key} = {value} from config")
             return value_type(value)
-    
+
     logger.info(f"Using {key} = {default} (default)")
     return default
 
@@ -501,10 +499,14 @@ class GdsBackend(AllocatorBackendInterface):
             num_threads=num_op_manager_threads,
             logger=logger,
         )
-        self.timeout_contains = get_config_value("timeout_contains", config, 10.0)
-        self.timeout_get_blocking = get_config_value("timeout_get_blocking", config, 10.0)
+        self.timeout_contains = get_config_value(
+            "timeout_contains", config, 10.0, float
+        )
+        self.timeout_get_blocking = get_config_value(
+            "timeout_get_blocking", config, 10.0, float
+        )
         self.timeout_batched_get_blocking = get_config_value(
-            "timeout_batched_get_blocking", config, 10.0
+            "timeout_batched_get_blocking", config, 10.0, float
         )
 
         if self.use_cufile:
@@ -575,24 +577,104 @@ class GdsBackend(AllocatorBackendInterface):
             self.cufile_base_pointer = None
         self.save_metadata_tasks: set[asyncio.Task] = set()
 
+        # flag for extra assertions to catch bugs but harm performance
+        self._debug_asserts = False
+        # flag to use O_NOATIME during metadata file read for performance improvement
+        self._use_noatime = True
+
+    async def _scan_metadata(self):
+        # TODO: even though we only run it once on startup, this is still
+        # not super scalable - test whether Rust code will be faster here, or
+        # whether we can serialize meta-data in groups for faster loading.
+        tasks = []
+        start = time.perf_counter()
+        with os.scandir(self.gds_path) as it:
+            for entry in it:
+                if not entry.is_dir():
+                    continue
+                l1_dir = os.path.basename(entry.name)
+                if len(l1_dir) != 2:
+                    continue
+                tasks.append(
+                    asyncio.to_thread(
+                        self._scan_metadata_subdir,
+                        os.path.join(self.gds_path, l1_dir),
+                        l1_dir,
+                    )
+                )
+        # TODO: If Python 3.11+, can we use TaskGroup instead?
+        await asyncio.gather(*tasks)
+        end = time.perf_counter()
+        logger.info(
+            f"Read {len(self.hot_cache)} cache entries from persistent "
+            f"storage in {end - start:.2f} seconds"
+        )
+
+    def _scan_metadata_subdir(self, path, l1_dir):
+        target_suffix = self.data_suffix + _METADATA_FILE_SUFFIX
+        with os.scandir(path) as it:
+            for entry in it:
+                if not entry.is_dir():
+                    continue
+                l2_dir = os.path.basename(entry.name)
+                if len(l2_dir) != 2:
+                    continue
+                with os.scandir(os.path.join(path, l2_dir)) as it2:
+                    for fentry in it2:
+                        if not fentry.is_file():
+                            continue
+                        if not fentry.name.endswith(target_suffix):
+                            continue
+                        filename = os.path.basename(fentry.name)
+                        key_str = filename[: -len(target_suffix)].replace("_", "/")
+                        try:
+                            key = CacheEngineKey.from_string(key_str)
+                        except ValueError as e:
+                            logger.error(
+                                f"Filename {filename} can't be converted "
+                                f"back into cache key: {e}"
+                            )
+                            continue
+                        try:
+                            self._read_metadata(key, fentry.path, l1_dir + l2_dir)
+                        except UnsupportedMetadataVersion:
+                            logger.error(
+                                "Unsupported metadata version for "
+                                f"{fentry.path}, ignoring"
+                            )
+
     def _read_metadata_info(self, filename: str):
         # Use O_NOATIME to prevent updating access time and improve performance
         # Instead of using Python's open() and read(), we use the OS's open() and
         # read() because it is faster - the metadata file is small and we don't
         # need any buffering.
-        #
-        # Additionally, we use O_NOATIME for two reasons:
-        # 1. Improve performance
-        # 2. To prevent updating the access time and preserve our LRU ordering
-        #    when we get rid of the metadata file separation.
-        fd = os.open(filename, os.O_RDONLY | os.O_NOATIME)
+        # Additionally, we use O_NOATIME to improve performance
+        if self._use_noatime:
+            try:
+                fd = os.open(filename, os.O_RDONLY | os.O_NOATIME)
+            except (
+                # PermissionError: User doesn't own the file
+                # AttributeError: O_NOATIME not available on this platform
+                # OSError: Filesystem doesn't support O_NOATIME (EINVAL)
+                PermissionError,
+                AttributeError,
+                OSError,
+            ):  # fallback to normal open if O_NOATIME is not supported
+                self._use_noatime = False
+                logger.info(
+                    "O_NOATIME flag not supported during metadata file read, "
+                    "falling back to normal open"
+                )
+                fd = os.open(filename, os.O_RDONLY)
+        else:
+            fd = os.open(filename, os.O_RDONLY)
         try:
             buf = os.read(fd, _METADATA_MAX_SIZE)
         finally:
             os.close(fd)
         return unpack_metadata(buf)
 
-    def _import_key_with_metadata(
+    def _read_metadata(
         self,
         key: CacheEngineKey,
         filename: str,
@@ -648,7 +730,7 @@ class GdsBackend(AllocatorBackendInterface):
             flags = os.O_RDONLY | os.O_NONBLOCK
             fd = os.open(path, flags)
             with os.fdopen(fd, "rb"):
-                return self._import_key_with_metadata(key, path, subdir_key)
+                return self._read_metadata(key, path, subdir_key)
         except FileNotFoundError:
             return None
         except PermissionError:
@@ -968,6 +1050,12 @@ class GdsBackend(AllocatorBackendInterface):
         if memory_obj is None:
             logger.error("Memory allocation failed during sync disk load.")
             return None
+        if self._debug_asserts:
+            assert memory_obj.tensor is not None
+            assert memory_obj.tensor.is_cuda
+            assert torch.device(self.dst_device) == torch.device(
+                memory_obj.tensor.device
+            )
 
         return self._load_bytes_from_disk_with_memory(key, path, memory_obj)
 
@@ -988,12 +1076,17 @@ class GdsBackend(AllocatorBackendInterface):
         Returns:
             The memory object with loaded data, or None if loading failed
         """
-        if memory_obj is None or memory_obj.tensor is None:
+        if memory_obj is None or not memory_obj.is_valid():
             return None
 
         offset = _METADATA_MAX_SIZE
         if self.cufile_base_pointer is None:
-            addr = ctypes.c_void_p(memory_obj.tensor.data_ptr())
+            tensor = memory_obj.tensor
+            assert tensor is not None
+            if self._debug_asserts:
+                assert tensor.is_cuda
+                assert torch.device(self.dst_device) == torch.device(tensor.device)
+            addr = ctypes.c_void_p(tensor.data_ptr())
             dev_offset = 0
         else:
             addr = ctypes.c_void_p(self.cufile_base_pointer)
@@ -1032,7 +1125,7 @@ class GdsBackend(AllocatorBackendInterface):
         keys: List[CacheEngineKey],
     ) -> List[Optional[MemoryObj]]:
         self.stats.record_batched_get(len(keys))
-        
+
         if self.use_thread_pool:
             logger.info("Using batched_get_blocking with thread pool implementation")
             start_time = time.perf_counter()
@@ -1209,7 +1302,9 @@ class GdsBackend(AllocatorBackendInterface):
                         file_offset=file_offset,
                         dev_offset=dev_offset,
                     )
-                    self.stats.record_gds_read(bytes_read, success=(bytes_read == size_in_bytes))
+                    self.stats.record_gds_read(
+                        bytes_read, success=(bytes_read == size_in_bytes)
+                    )
                     return bytes_read
             elif self.cudart:
                 fd = os.open(gds_path, os.O_RDONLY)
@@ -1417,7 +1512,7 @@ class GdsBackend(AllocatorBackendInterface):
             )
             latency_ms = (time.perf_counter() - start_time) * 1000
             self.stats.record_contains_latency(latency_ms)
-            
+
             if read_from_disk:
                 self.stats.record_disk_lookup(hit=True)
                 return True
@@ -1450,7 +1545,7 @@ class GdsBackend(AllocatorBackendInterface):
         :return: Number of keys that exist in the storage backend
         """
         self.stats.record_batched_contains(len(keys))
-        
+
         num_hit_chunks = 0
         while num_hit_chunks < len(keys):
             # Keep the lock as long as we keep getting hits
