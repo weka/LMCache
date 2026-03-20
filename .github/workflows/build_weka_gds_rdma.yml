@@ -70,13 +70,23 @@ jobs:
           
           python -m pip install --upgrade pip
           python -m pip install torch==2.9.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
-          python -m pip install dist/*.whl
+          
+          # Install the wheel with verbose output to debug
+          echo "Available wheels in dist/:"
+          ls -la dist/
+          
+          # Force reinstall and show what's being installed
+          python -m pip install --force-reinstall --no-deps dist/*.whl
           python -m pip install -r requirements/test.txt
           
-          # Verify installation
+          # Verify installation - check c_ops specifically
           python --version
           python -c "import torch; print(f'PyTorch {torch.__version__}')"
-          python -c "import lmcache; print(f'LMCache installed')"
+          python -c "import lmcache; print(f'LMCache installed from: {lmcache.__file__}')"
+          python -c "from lmcache import c_ops; print(f'c_ops loaded successfully')"
+          
+          # Show installed package location and contents
+          python -c "import lmcache, os; pkg_dir = os.path.dirname(lmcache.__file__); print(f'Package dir: {pkg_dir}'); import subprocess; subprocess.run(['ls', '-la', pkg_dir])"
 
       - name: Run tests natively
         run: |
