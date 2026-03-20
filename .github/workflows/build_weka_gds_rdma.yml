@@ -66,8 +66,6 @@ jobs:
           # Activate and install
           source "$VENV_PATH/bin/activate"
           
-          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-          
           python -m pip install --upgrade pip
           python -m pip install torch==2.9.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
           
@@ -79,14 +77,16 @@ jobs:
           python -m pip install --force-reinstall --no-deps dist/*.whl
           python -m pip install -r requirements/test.txt
           
-          # Verify installation - check c_ops specifically
+          # Set up library paths - need PyTorch's lib dir for libc10.so
+          TORCH_LIB=$(python -c "import torch; print(torch.__path__[0] + '/lib')")
+          export LD_LIBRARY_PATH=$TORCH_LIB:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          
+          # Verify installation from /tmp to avoid importing from source checkout
+          cd /tmp
           python --version
           python -c "import torch; print(f'PyTorch {torch.__version__}')"
           python -c "import lmcache; print(f'LMCache installed from: {lmcache.__file__}')"
-          python -c "from lmcache import c_ops; print(f'c_ops loaded successfully')"
-          
-          # Show installed package location and contents
-          python -c "import lmcache, os; pkg_dir = os.path.dirname(lmcache.__file__); print(f'Package dir: {pkg_dir}'); import subprocess; subprocess.run(['ls', '-la', pkg_dir])"
+          python -c "from lmcache import c_ops; print('c_ops loaded successfully')"
 
       - name: Run tests natively
         run: |
