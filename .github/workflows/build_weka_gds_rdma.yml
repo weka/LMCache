@@ -73,8 +73,8 @@ jobs:
           echo "Available wheels in dist/:"
           ls -la dist/
           
-          # Force reinstall and show what's being installed
-          python -m pip install --force-reinstall --no-deps dist/*.whl
+          # Install the wheel (with dependencies) then reinstall test requirements
+          python -m pip install dist/*.whl
           python -m pip install -r requirements/test.txt
           
           # Set up library paths - need PyTorch's lib dir for libc10.so
