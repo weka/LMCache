@@ -92,7 +92,14 @@ jobs:
         run: |
           source "$VENV_PATH/bin/activate"
           
-          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          # Set up library paths - need PyTorch's lib dir for libc10.so
+          TORCH_LIB=$(python -c "import torch; print(torch.__path__[0] + '/lib')")
+          export LD_LIBRARY_PATH=$TORCH_LIB:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          
+          # Copy tests to temp directory to avoid importing from source checkout
+          TEST_DIR=$(mktemp -d)
+          cp -r tests "$TEST_DIR/"
+          cd "$TEST_DIR"
           
           mkdir -p durations
           
@@ -110,6 +117,9 @@ jobs:
             --ignore=tests/v1/multiprocess \
             --ignore=tests/v1/storage_backend/test_eic.py \
             tests/
+          
+          # Copy results back to workspace
+          cp -r coverage-test coverage-test.xml durations "${{ github.workspace }}/" 2>/dev/null || true
 
       - name: Cleanup virtual environment
         if: always()
