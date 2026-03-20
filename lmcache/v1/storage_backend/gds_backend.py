@@ -781,7 +781,7 @@ class GdsBackend(AllocatorBackendInterface):
                 self.gds_path,
                 l1_dir,
                 l2_dir,
-                key_str.replace("/", "_") + _DATA_FILE_SUFFIX,
+                key_str.replace("/", "_") + self.data_suffix,
             ),
             l1_dir + l2_dir,
             l1_dir,
