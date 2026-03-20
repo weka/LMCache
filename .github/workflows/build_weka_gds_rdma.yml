@@ -1,4 +1,4 @@
-name: Build Weka Wheels
+name: Build and Test Weka Wheels
 
 # Triggered on:
 #   - Any push/merge to feat/weka-gds-rdma (the main Weka integration branch)
@@ -11,27 +11,16 @@ on:
     branches:
       - feat/weka-gds-rdma
 
-env:
-  LC_ALL: en_US.UTF-8
-  # Pass the computed Weka version into the cibuildwheel Docker container
-  CIBW_ENVIRONMENT_PASS_LINUX: SETUPTOOLS_SCM_PRETEND_VERSION
-
-defaults:
-  run:
-    shell: bash
-
 permissions:
   contents: write
 
 jobs:
   build-wheels:
-    name: Build CUDA wheels (${{ matrix.arch }}, CUDA 13.0)
-    runs-on: ${{ matrix.runner }}
-
+    name: Build wheels
     # For pull_request events: only run if the source branch is a feat/weka* branch.
     # For push events: github.head_ref is empty, so the condition passes through.
     if: github.event_name == 'push' || startsWith(github.head_ref, 'feat/weka')
-
+    
     strategy:
       matrix:
         include:
@@ -41,112 +30,132 @@ jobs:
             cibw_image: docker.io/pytorch/manylinuxaarch64-builder:cuda13.0
             plat: manylinux_2_28_aarch64
 
+    uses: ./.github/workflows/_build_weka_wheel.yml
+    with:
+      arch: ${{ matrix.arch }}
+      runner: ${{ matrix.runner }}
+      cibw_build: ${{ matrix.cibw_build }}
+      cibw_image: ${{ matrix.cibw_image }}
+      plat: ${{ matrix.plat }}
+
+  test:
+    name: Run unit tests (native)
+    needs: build-wheels
+    runs-on: self-hosted
+    env:
+      VENV_PATH: ${{ github.workspace }}/.venv-test
+      CUDA_HOME: /usr/local/cuda
+      PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu130
+
     steps:
       - name: Checkout code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
-          fetch-depth: 0
+          pattern: weka-wheel-*
+          merge-multiple: true
+          path: dist
 
-      - name: Fetch upstream tags for version detection
-        # Fetches upstream (LMCache/LMCache) tags to automatically determine the base
-        # version. Only tags are fetched (refs/tags/*:refs/tags/*), no branches.
-        # The version computation finds the most recent upstream v* tag reachable from
-        # HEAD and counts commits since then: 0.3.14+weka.<commits-since-v0.3.14>
+      - name: Create virtual environment and install dependencies
         run: |
-          git fetch origin --tags
-          git remote add upstream https://github.com/LMCache/LMCache.git 2>/dev/null || git remote set-url upstream https://github.com/LMCache/LMCache.git
-          git fetch upstream 'refs/tags/*:refs/tags/*' --no-recurse-submodules
-
-      - name: Compute Weka version
-        id: version
-        run: |
-          # Find the most recent upstream v* tag reachable from HEAD.
-          # Exclude CI-generated v*-weka* tags to find the true upstream base version.
-          UPSTREAM_TAG=$(git describe --tags --match "v*" --exclude "v*-weka*" --abbrev=0 2>/dev/null || echo "")
-
-          if [ -n "$UPSTREAM_TAG" ]; then
-            # Strip "v" prefix to get the upstream version number (e.g. "0.3.14")
-            UPSTREAM_VERSION="${UPSTREAM_TAG#v}"
-            # Count commits added by Weka on top of this upstream tag
-            WEKA_COMMITS=$(git rev-list "${UPSTREAM_TAG}..HEAD" --count)
-          else
-            # Fallback: no upstream v* tag found — use 0.0.0 and total commit count
-            echo "::warning::No upstream v* tag found. Using fallback version."
-            UPSTREAM_VERSION="0.0.0"
-            WEKA_COMMITS=$(git rev-list HEAD --count)
-          fi
-
-          WEKA_VERSION="${UPSTREAM_VERSION}+weka.${WEKA_COMMITS}"
-          echo "weka_version=${WEKA_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "SETUPTOOLS_SCM_PRETEND_VERSION=${WEKA_VERSION}" >> "$GITHUB_ENV"
-          echo "Building version: ${WEKA_VERSION}"
-
-      - name: Setup Python 3.12
-        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
-        with:
-          python-version: "3.12"
-
-      - name: Install build tooling
-        run: |
+          # Use system Python 3.12 to create venv
+          python3.12 -m venv "$VENV_PATH"
+          
+          # Activate and install
+          source "$VENV_PATH/bin/activate"
+          
           python -m pip install --upgrade pip
-          pip install build cibuildwheel
+          python -m pip install torch==2.9.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
+          
+          # Install the wheel with verbose output to debug
+          echo "Available wheels in dist/:"
+          ls -la dist/
+          
+          # Install the wheel (with dependencies) then reinstall test requirements
+          python -m pip install dist/*.whl
+          python -m pip install -r requirements/test.txt
+          
+          # Set up library paths - need PyTorch's lib dir for libc10.so
+          TORCH_LIB=$(python -c "import torch; print(torch.__path__[0] + '/lib')")
+          export LD_LIBRARY_PATH=$TORCH_LIB:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          
+          # Verify installation from /tmp to avoid importing from source checkout
+          cd /tmp
+          python --version
+          python -c "import torch; print(f'PyTorch {torch.__version__}')"
+          python -c "import lmcache; print(f'LMCache installed from: {lmcache.__file__}')"
+          python -c "from lmcache import c_ops; print('c_ops loaded successfully')"
 
-      - name: Build CUDA wheels (${{ matrix.arch }}, CUDA 13.0)
-        # Base config is in pyproject.toml [tool.cibuildwheel] (targets x86_64 for the
-        # upstream publish workflow). The env vars below override it for this ARM64 runner.
-        # SETUPTOOLS_SCM_PRETEND_VERSION is injected into the container via
-        # CIBW_ENVIRONMENT_PASS_LINUX, overriding automatic version detection.
-        #
-        # CUDA 13.0 notes:
-        #   - torch==2.8.0 on PyPI is CPU-only for aarch64; CUDA 13-enabled wheels start
-        #     at torch>=2.9.0 on PyTorch's own index (download.pytorch.org/whl/cu130).
-        #     CIBW_BEFORE_ALL_LINUX patches pyproject.toml inside the container so the
-        #     isolated build env installs the correct CUDA-enabled wheel.
-        #   - CUDA 13.0 dropped sm_70 (V100); TORCH_CUDA_ARCH_LIST starts at 7.5.
-        #   - libcudart.so major version bumped from 12 → 13.
-        env:
-          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ env.SETUPTOOLS_SCM_PRETEND_VERSION }}
-          # Override build target from matrix
-          CIBW_BUILD: ${{ matrix.cibw_build }}
-          # PyTorch manylinux builder image with CUDA 13.0
-          CIBW_MANYLINUX_AARCH64_IMAGE: ${{ matrix.cibw_image }}
-          CIBW_MANYLINUX_X86_64_IMAGE: ${{ matrix.cibw_image }}
-          # Patch pyproject.toml inside the container to use a CUDA 13-enabled torch.
-          # This only affects the container copy; the source repo is untouched.
-          CIBW_BEFORE_ALL_LINUX: >-
-            sed -i 's/torch==2.8.0/torch==2.9.1+cu130/'
-            /project/pyproject.toml
-          # Environment passed into the build container:
-          #   - PIP_EXTRA_INDEX_URL: lets pip find torch==2.9.1+cu130 from PyTorch's index
-          #   - CUDA_HOME: explicit fallback in case the container ENV is not inherited
-          #   - TORCH_CUDA_ARCH_LIST: sm_70 removed (unsupported by CUDA 13.0)
-          CIBW_ENVIRONMENT: >-
-            TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0;10.0"
-            ENABLE_CXX11_ABI="1"
-            CUDA_HOME="/usr/local/cuda"
-            PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cu130"
-          # Repair wheel using platform from matrix
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
-            auditwheel repair
-            --plat ${{ matrix.plat }}
-            --exclude libtorch.so
-            --exclude libtorch_cuda.so
-            --exclude libtorch_python.so
-            --exclude libtorch_cpu.so
-            --exclude libc10.so
-            --exclude libc10_cuda.so
-            --exclude libcudart.so.13
-            -w {dest_dir} {wheel}
+      - name: Run tests natively
         run: |
-          rm -rf dist/
-          python -m cibuildwheel --output-dir dist
+          source "$VENV_PATH/bin/activate"
+          
+          # Set up library paths - need PyTorch's lib dir for libc10.so
+          TORCH_LIB=$(python -c "import torch; print(torch.__path__[0] + '/lib')")
+          export LD_LIBRARY_PATH=$TORCH_LIB:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          
+          # Copy tests to temp directory to avoid importing from source checkout
+          TEST_DIR=$(mktemp -d)
+          cp -r tests "$TEST_DIR/"
+          cd "$TEST_DIR"
+          
+          mkdir -p durations
+          
+          python -m pytest \
+            --maxfail=1 \
+            --cov=lmcache \
+            --cov-report term \
+            --cov-report=html:coverage-test \
+            --cov-report=xml:coverage-test.xml \
+            --html=durations/test.html \
+            --ignore=tests/disagg \
+            --ignore=tests/v1/test_pos_kernels.py \
+            --ignore=tests/v1/test_nixl_storage.py \
+            --ignore=tests/skipped \
+            --ignore=tests/v1/multiprocess \
+            --ignore=tests/v1/storage_backend/test_eic.py \
+            tests/
+          
+          # Copy results back to workspace
+          cp -r coverage-test coverage-test.xml durations "${{ github.workspace }}/" 2>/dev/null || true
+
+      - name: Cleanup virtual environment
+        if: always()
+        run: rm -rf "$VENV_PATH"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: test-results-${{ needs.build-wheels.outputs.weka_version }}-${{ github.run_id }}
+          path: |
+            coverage-test/
+            coverage-test.xml
+            durations/test.html
+          retention-days: 30
+
+  publish:
+    name: Publish wheels
+    needs: [build-wheels, test]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          pattern: weka-wheel-*
+          merge-multiple: true
+          path: dist
 
       # PRs: upload as a temporary artifact for inspection (auto-deleted after 30 days)
       - name: Upload PR artifact
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: weka-wheels-${{ steps.version.outputs.weka_version }}-${{ github.run_id }}
+          name: weka-wheels-${{ needs.build-wheels.outputs.weka_version }}-${{ github.run_id }}
           path: dist/*.whl
           retention-days: 30
 
@@ -158,11 +167,11 @@ jobs:
         if: github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          WEKA_VERSION: ${{ steps.version.outputs.weka_version }}
+          WEKA_VERSION: ${{ needs.build-wheels.outputs.weka_version }}
         run: |
           RELEASE_TAG="v${WEKA_VERSION//+/-}"
           gh release create "${RELEASE_TAG}" dist/*.whl \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "Weka LMCache ${WEKA_VERSION}" \
-            --notes "${{ matrix.arch }} / CUDA 13.0 wheels for lmcache ${WEKA_VERSION} (torch 2.9.1+cu130, Python 3.12)"
+            --notes "CUDA 13.0 wheels for lmcache ${WEKA_VERSION} (torch 2.9.1+cu130, Python 3.12)"
