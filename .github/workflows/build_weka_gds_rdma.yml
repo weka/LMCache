@@ -39,7 +39,7 @@ jobs:
       plat: ${{ matrix.plat }}
 
   test:
-    name: Run unit tests
+    name: Run unit tests (native)
     needs: build-wheels
     runs-on: self-hosted
 
@@ -54,48 +54,66 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Run tests in Docker
+      - name: Set up Python 3.12 with pyenv
         run: |
-          docker run --rm \
-            --gpus all \
-            --user $(id -u):$(id -g) \
-            -v $PWD:/workspace \
-            -w /workspace \
-            -e HOME=/tmp \
-            docker.io/pytorch/manylinuxaarch64-builder:cuda13.0 \
-            bash -c '
-              export CUDA_HOME=/usr/local/cuda
-              export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/_internal/cpython-3.12.8/lib
-              export PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu130
-              
-              python3.12 -m pip install --user --upgrade pip
-              python3.12 -m pip install --user torch==2.9.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
-              python3.12 -m pip install --user dist/*.whl
-              python3.12 -m pip install --user -r requirements/test.txt
-              
-              cd /tmp
-              cp -r /workspace/tests .
-              python3.12 -m pytest \
-                --maxfail=1 \
-                --cov=lmcache \
-                --cov-report term \
-                --cov-report=html:/workspace/coverage-test \
-                --cov-report=xml:/workspace/coverage-test.xml \
-                --html=/workspace/test.html \
-                --ignore=tests/benchmarks \
-                --ignore=tests/disagg \
-                --ignore=tests/v1/test_pos_kernels.py \
-                --ignore=tests/v1/test_nixl_storage.py \
-                --ignore=tests/skipped \
-                --ignore=tests/v1/multiprocess \
-                --ignore=tests/v1/storage_backend/test_eic.py \
-                --ignore=tests/v1/storage_backend/test_gds_backend.py \
-                --ignore=tests/v1/test_connector.py \
-                --ignore=tests/v1/storage_backend/test_fs_connector.py \
-                --ignore=tests/v1/test_health_monitor_fallback_recovery.py \
-                -k "not (remote or lmserver)" \
-                tests/
-            '
+          # Install pyenv if not present
+          if [ ! -d "$HOME/.pyenv" ]; then
+            curl https://pyenv.run | bash
+          fi
+          
+          export PYENV_ROOT="$HOME/.pyenv"
+          export PATH="$PYENV_ROOT/bin:$PATH"
+          eval "$(pyenv init -)"
+          
+          # Install Python 3.12 if not already installed
+          pyenv install -s 3.12
+          pyenv local 3.12
+          
+          # Verify Python version
+          python --version
+
+      - name: Install dependencies
+        run: |
+          export PYENV_ROOT="$HOME/.pyenv"
+          export PATH="$PYENV_ROOT/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv local 3.12
+          
+          export CUDA_HOME=/usr/local/cuda
+          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          export PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu130
+          
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.9.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
+          python -m pip install dist/*.whl
+          python -m pip install -r requirements/test.txt
+
+      - name: Run tests natively
+        run: |
+          export PYENV_ROOT="$HOME/.pyenv"
+          export PATH="$PYENV_ROOT/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv local 3.12
+          
+          export CUDA_HOME=/usr/local/cuda
+          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          
+          mkdir -p durations
+          
+          python -m pytest \
+            --maxfail=1 \
+            --cov=lmcache \
+            --cov-report term \
+            --cov-report=html:coverage-test \
+            --cov-report=xml:coverage-test.xml \
+            --html=durations/test.html \
+            --ignore=tests/disagg \
+            --ignore=tests/v1/test_pos_kernels.py \
+            --ignore=tests/v1/test_nixl_storage.py \
+            --ignore=tests/skipped \
+            --ignore=tests/v1/multiprocess \
+            --ignore=tests/v1/storage_backend/test_eic.py \
+            tests/
 
       - name: Upload test results
         if: always()
@@ -105,7 +123,7 @@ jobs:
           path: |
             coverage-test/
             coverage-test.xml
-            test.html
+            durations/test.html
           retention-days: 30
 
   publish:
