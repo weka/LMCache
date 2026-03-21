@@ -1151,6 +1151,12 @@ class GdsBackend(AllocatorBackendInterface):
             with open(tmp_path, "wb") as f:
                 f.write(metadata)
             if self.cufile:
+                # Pre-extend file to full size before cuFile write.
+                # cuFileWrite on WekaFS cannot extend a file beyond its
+                # current size, so we must ftruncate first.
+                fd = os.open(tmp_path, os.O_RDWR)
+                os.ftruncate(fd, offset + kv_chunk.nbytes)
+                os.close(fd)
                 with self.cufile.CuFile(
                     tmp_path, "r+", use_direct_io=self.use_direct_io
                 ) as f:
