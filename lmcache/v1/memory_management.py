@@ -2229,7 +2229,7 @@ class AdHocMemoryAllocator(MemoryAllocatorInterface):
 
 
 class CuFileMemoryAllocator(GPUMemoryAllocator):
-    def __init__(self, size: int, device=None):
+    def __init__(self, size: int, device=None, num_stripes: int = 1):
         # HACK(Jiayi): cufile import is buggy on some hardware
         # (e.g., without GPUDirect), so it's temporarily put here.
         # Third Party
@@ -2245,12 +2245,25 @@ class CuFileMemoryAllocator(GPUMemoryAllocator):
                 device = "cpu:0"
         super().__init__(size, device, align_bytes=4096)
         self.base_pointer = self.tensor.data_ptr()
-        cuFileBufRegister(ctypes.c_void_p(self.base_pointer), size, flags=0)
+        self.num_stripes = num_stripes
+        self.stripe_size = size // num_stripes
+        self._stripe_pointers: list[int] = []
+        for i in range(num_stripes):
+            stripe_ptr = self.base_pointer + i * self.stripe_size
+            cuFileBufRegister(
+                ctypes.c_void_p(stripe_ptr), self.stripe_size, flags=0
+            )
+            self._stripe_pointers.append(stripe_ptr)
 
     def __del__(self):
-        self.cuFileBufDeregister(ctypes.c_void_p(self.base_pointer))
+        for ptr in self._stripe_pointers:
+            try:
+                self.cuFileBufDeregister(ctypes.c_void_p(ptr))
+            except Exception:
+                pass
 
     def __str__(self):
+
         return "CuFileMemoryAllocator"
 
 

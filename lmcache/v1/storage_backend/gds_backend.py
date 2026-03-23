@@ -39,64 +39,6 @@ from lmcache.v1.utils.run_with_timeout import OperationManager, OperationTimeout
 logger = init_logger(__name__)
 
 
-class CuFileBufferPool:
-    """Pool of independently cuFileBufRegister'd GPU buffers for parallel IO.
-
-    When cuFile uses a single large registered buffer with dev_offset, all
-    threads share RDMA registration and serialize. With independent buffers,
-    each thread gets its own RDMA-registered region for full parallelism.
-
-    Configure via LMCACHE_EXTRA_CONFIG JSON:
-      cufile_buffer_pool_size:        number of buffers (0 = disabled, use shared buffer)
-      cufile_buffer_pool_buf_size_mb: size of each buffer in MiB (default: 32)
-    """
-
-    def __init__(self, pool_size: int, buf_size_bytes: int, device: str):
-        from cufile.bindings import cuFileBufRegister, cuFileBufDeregister
-
-        self._cuFileBufDeregister = cuFileBufDeregister
-        self._buffers: list[torch.Tensor] = []
-        self._pointers: list[int] = []
-        self._available: list[int] = list(range(pool_size))
-        self._lock = threading.Lock()
-        self._condition = threading.Condition(self._lock)
-        self.buf_size = buf_size_bytes
-
-        for i in range(pool_size):
-            buf = torch.zeros(buf_size_bytes, dtype=torch.uint8, device=device)
-            ptr = buf.data_ptr()
-            cuFileBufRegister(ctypes.c_void_p(ptr), buf_size_bytes, flags=0)
-            self._buffers.append(buf)
-            self._pointers.append(ptr)
-
-        logger.info(
-            f"CuFileBufferPool: {pool_size} buffers × "
-            f"{buf_size_bytes / 1024 / 1024:.0f} MiB on {device}"
-        )
-
-    def acquire(self, timeout: float = 10.0) -> tuple[int, int]:
-        """Acquire a buffer. Returns (slot_index, pointer). Blocks if none available."""
-        with self._condition:
-            while not self._available:
-                if not self._condition.wait(timeout=timeout):
-                    raise RuntimeError("CuFileBufferPool: acquire timed out")
-            slot = self._available.pop()
-            return slot, self._pointers[slot]
-
-    def release(self, slot: int):
-        """Return a buffer to the pool."""
-        with self._condition:
-            self._available.append(slot)
-            self._condition.notify()
-
-    def __del__(self):
-        for ptr in self._pointers:
-            try:
-                self._cuFileBufDeregister(ctypes.c_void_p(ptr))
-            except Exception:
-                pass
-
-
 _METADATA_FILE_SUFFIX = ".metadata"
 _DATA_FILE_SUFFIX = ".kvcache.safetensors"
 _WEKA_DATA_FILE_SUFFIX = ".weka1"
@@ -633,20 +575,6 @@ class GdsBackend(AllocatorBackendInterface):
             logger.info("No base pointer found, cufile will use bounce buffers")
             self.cufile_base_pointer = None
 
-        # Optional buffer pool for parallel cuFile IO.
-        # When enabled, read/write IO uses independently registered buffers
-        # instead of the shared cufile_base_pointer, improving RDMA parallelism.
-        self._buffer_pool: Optional[CuFileBufferPool] = None
-        if config.extra_config is not None:
-            pool_size = config.extra_config.get("cufile_buffer_pool_size", 0)
-            pool_buf_mb = config.extra_config.get("cufile_buffer_pool_buf_size_mb", 32)
-            if pool_size > 0:
-                self._buffer_pool = CuFileBufferPool(
-                    pool_size=pool_size,
-                    buf_size_bytes=pool_buf_mb * 1024 * 1024,
-                    device=dst_device,
-                )
-
         self.save_metadata_tasks: set[asyncio.Task] = set()
 
     def _read_metadata_info(self, filename: str):
@@ -1068,37 +996,28 @@ class GdsBackend(AllocatorBackendInterface):
         offset = _METADATA_MAX_SIZE
         size = memory_obj.get_size()
 
-        # Buffer pool path: use independently registered bounce buffer for IO,
-        # then copy to the target tensor. Avoids shared-buffer RDMA contention.
-        if self._buffer_pool is not None and size <= self._buffer_pool.buf_size:
-            slot, pool_ptr = self._buffer_pool.acquire()
-            try:
-                ret = self._load_gds(path, offset, ctypes.c_void_p(pool_ptr), size, 0)
-                if ret == size:
-                    # Copy from pool buffer to target tensor
-                    dst = memory_obj.tensor
-                    src_tensor = self._buffer_pool._buffers[slot][:size]
-                    dst.view(-1).copy_(src_tensor.view(-1)[:dst.numel()])
-                else:
-                    if ret < 0:
-                        logger.error(f"Error loading {path}: ret: {ret}")
-                        with self.hot_lock:
-                            self.hot_cache.pop(key)
-                    else:
-                        logger.error(f"Error loading {path}: got {ret}/{size} bytes")
-                    memory_obj.ref_count_down()
-                    return None
-            finally:
-                self._buffer_pool.release(slot)
-            return memory_obj
-
-        # Default path: use shared base pointer with offset
+        # Default path: route through stripe for zero-copy parallel RDMA.
         if self.cufile_base_pointer is None:
             addr = ctypes.c_void_p(memory_obj.tensor.data_ptr())
             dev_offset = 0
         else:
-            addr = ctypes.c_void_p(self.cufile_base_pointer)
-            dev_offset = memory_obj.metadata.address
+            raw_offset = memory_obj.metadata.address
+            allocator = self.memory_allocator
+            if allocator.num_stripes > 1:
+                stripe_size = allocator.stripe_size
+                stripe_idx = raw_offset // stripe_size
+                local_offset = raw_offset % stripe_size
+                assert raw_offset + size <= (stripe_idx + 1) * stripe_size, (
+                    f"Read spans stripe boundary: offset={raw_offset} size={size} "
+                    f"stripe_size={stripe_size} stripe_idx={stripe_idx}"
+                )
+                addr = ctypes.c_void_p(
+                    self.cufile_base_pointer + stripe_idx * stripe_size
+                )
+                dev_offset = local_offset
+            else:
+                addr = ctypes.c_void_p(self.cufile_base_pointer)
+                dev_offset = raw_offset
         ret = self._load_gds(path, offset, addr, size, dev_offset)
         if ret != size:
             if ret < 0:
@@ -1236,8 +1155,16 @@ class GdsBackend(AllocatorBackendInterface):
             addr = ctypes.c_void_p(kv_chunk.data_ptr())
             dev_offset = 0
         else:
-            addr = ctypes.c_void_p(base_pointer)
-            dev_offset = device_offset
+            allocator = self.memory_allocator
+            if allocator.num_stripes > 1:
+                stripe_size = allocator.stripe_size
+                stripe_idx = device_offset // stripe_size
+                local_offset = device_offset % stripe_size
+                addr = ctypes.c_void_p(base_pointer + stripe_idx * stripe_size)
+                dev_offset = local_offset
+            else:
+                addr = ctypes.c_void_p(base_pointer)
+                dev_offset = device_offset
         tmp_path = path + tmp
 
         offset = _METADATA_MAX_SIZE
@@ -1373,7 +1300,14 @@ class GdsBackend(AllocatorBackendInterface):
         self, config: LMCacheEngineConfig, metadata: LMCacheMetadata
     ) -> CuFileMemoryAllocator:
         assert config.cufile_buffer_size is not None
-        return CuFileMemoryAllocator(config.cufile_buffer_size * 1024**2)
+        num_stripes = (
+            config.extra_config.get("cufile_num_stripes", 1)
+            if config.extra_config
+            else 1
+        )
+        return CuFileMemoryAllocator(
+            config.cufile_buffer_size * 1024**2, num_stripes=num_stripes
+        )
 
     def allocate(
         self,
