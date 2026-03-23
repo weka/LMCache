@@ -21,7 +21,11 @@ logger = init_logger(__name__)
 
 
 class EvictionController(StorageControllerInterface):
-    def __init__(self, l1_manager: L1Manager, eviction_config: EvictionConfig):
+    def __init__(
+        self,
+        l1_manager: L1Manager,
+        eviction_config: EvictionConfig,
+    ):
         super().__init__(l1_manager)
 
         self._eviction_config = eviction_config
@@ -34,6 +38,17 @@ class EvictionController(StorageControllerInterface):
             target=self._eviction_loop,
             daemon=True,
         )
+
+    def report_status(self) -> dict:
+        """Return a status dict for the eviction controller."""
+        is_healthy = self._thread.is_alive()
+        return {
+            "is_healthy": is_healthy,
+            "thread_alive": is_healthy,
+            "eviction_policy": self._eviction_config.eviction_policy,
+            "trigger_watermark": self._eviction_config.trigger_watermark,
+            "eviction_ratio": self._eviction_config.eviction_ratio,
+        }
 
     def start(self):
         logger.info("Starting EvictionController...")
